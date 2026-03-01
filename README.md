@@ -258,8 +258,8 @@ It is designed to complement the [NIST NCCoE demonstration project](https://www.
 ```bash
 pip install -e ".[dev]"
 pytest
-python smoke_test.py           # Quick smoke test
-python smoke_test.py --full    # Smoke test + end-to-end example
+python smoke_test.py           # Full lifecycle (create→validate→spending→revoke)
+python smoke_test.py -v       # Same, with verbose example output
 ```
 
 ## Related Projects
