@@ -15,12 +15,23 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, TYPE_CHECKING
 
 import jwt as pyjwt
 
-from .claims import SettlementClaims, CLAIMS_NAMESPACE
+from .claims import (
+    SettlementClaims,
+    SpendingLimit,
+    CounterpartyPolicy,
+    DelegationChain,
+    DelegationLink,
+    CLAIMS_NAMESPACE,
+)
 from .scopes import SettlementScope, parse_scopes, format_scopes
+
+if TYPE_CHECKING:
+    from .spending import SpendingTracker
 
 
 # ─── Exceptions ────────────────────────────────────────────────────────────
@@ -161,7 +172,174 @@ def create_settlement_token(
     return pyjwt.encode(payload, signing_key, algorithm=algorithm)
 
 
-# ─── Token Validation ─────────────────────────────────────────────────────
+def create_delegated_token(
+    parent: ValidatedToken,
+    child_agent_id: str,
+    child_limits: SpendingLimit,
+    signing_key: str | bytes,
+    issuer: str,
+    audience: str = "https://exchange.a2a-settlement.org",
+    expires_in: int = 3600,
+    algorithm: str = "HS256",
+    child_counterparty_policy: Optional[CounterpartyPolicy] = None,
+    purpose: Optional[str] = None,
+    transferable: bool = False,
+) -> tuple[str, str]:
+    """Create a delegated token for a sub-agent with carved-out spending limits.
+
+    The parent must have transferable=True. Child limits can only narrow,
+    never expand, the parent's limits. The sum of delegated allocations
+    cannot exceed the parent's limit per dimension.
+
+    Args:
+        parent: The delegating agent's validated token.
+        child_agent_id: The sub-agent's identifier.
+        child_limits: Spending limits for the child (must be <= parent per dimension).
+        signing_key: Key for signing the new token.
+        issuer: Issuer for the delegated token (typically the exchange).
+        audience: Token audience.
+        expires_in: Token lifetime in seconds.
+        algorithm: JWT signing algorithm.
+        child_counterparty_policy: Optional counterparty policy for the child.
+        purpose: Optional purpose for the delegation link.
+        transferable: Whether the child can sub-delegate (default False).
+
+    Returns:
+        Tuple of (token_string, child_jti). Caller must call
+        tracker.allocate_delegation(parent.jti, child_jti, child_limits)
+        to reserve budget from the parent. Use create_delegated_token_async
+        for atomic creation with allocation.
+
+    Raises:
+        DelegationViolationError: Parent cannot sub-delegate.
+        ValueError: Child limits exceed parent or parent's remaining budget.
+    """
+    if parent.settlement_claims.delegation is None:
+        raise DelegationViolationError(
+            "Parent token has no delegation chain; cannot sub-delegate"
+        )
+    if not parent.settlement_claims.delegation.transferable:
+        raise DelegationViolationError(
+            "Parent token does not allow sub-delegation (transferable=False)"
+        )
+
+    parent_limits = parent.settlement_claims.spending_limits
+
+    # Validate child limits <= parent per dimension (when parent has a limit)
+    if parent_limits.per_transaction is not None:
+        c = child_limits.per_transaction
+        if c is None or c > parent_limits.per_transaction:
+            raise DelegationViolationError(
+                f"Child per_transaction {c} exceeds "
+                f"parent limit {parent_limits.per_transaction}"
+            )
+    if parent_limits.per_session is not None:
+        c = child_limits.per_session
+        if c is None or c > parent_limits.per_session:
+            raise DelegationViolationError(
+                f"Child per_session {c} exceeds "
+                f"parent limit {parent_limits.per_session}"
+            )
+    if parent_limits.per_hour is not None:
+        c = child_limits.per_hour
+        if c is None or c > parent_limits.per_hour:
+            raise DelegationViolationError(
+                f"Child per_hour {c} exceeds "
+                f"parent limit {parent_limits.per_hour}"
+            )
+    if parent_limits.per_day is not None:
+        c = child_limits.per_day
+        if c is None or c > parent_limits.per_day:
+            raise DelegationViolationError(
+                f"Child per_day {c} exceeds "
+                f"parent limit {parent_limits.per_day}"
+            )
+
+    # Build extended delegation chain
+    new_link = DelegationLink(
+        principal=f"agent:{parent.settlement_claims.agent_id}",
+        delegated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        purpose=purpose,
+    )
+    parent_chain = parent.settlement_claims.delegation.chain
+    child_chain = DelegationChain(
+        chain=parent_chain + [new_link],
+        transferable=transferable,
+    )
+
+    child_claims = SettlementClaims(
+        agent_id=child_agent_id,
+        org_id=parent.settlement_claims.org_id,
+        spending_limits=child_limits,
+        counterparty_policy=child_counterparty_policy or parent.settlement_claims.counterparty_policy,
+        settlement_methods=parent.settlement_claims.settlement_methods,
+        delegation=child_chain,
+        parent_jti=parent.jti,
+        environment=parent.settlement_claims.environment,
+        certification_id=parent.settlement_claims.certification_id,
+    )
+
+    token = create_settlement_token(
+        claims=child_claims,
+        scopes=parent.scopes,
+        signing_key=signing_key,
+        issuer=issuer,
+        audience=audience,
+        expires_in=expires_in,
+        algorithm=algorithm,
+    )
+
+    # Extract child jti from the token (decode without audience verification)
+    payload = pyjwt.decode(
+        token, signing_key, algorithms=[algorithm], options={"verify_aud": False}
+    )
+    child_jti = payload.get("jti", "unknown")
+
+    return (token, child_jti)
+
+
+async def create_delegated_token_async(
+    parent: ValidatedToken,
+    child_agent_id: str,
+    child_limits: SpendingLimit,
+    signing_key: str | bytes,
+    issuer: str,
+    spending_tracker: "SpendingTracker",
+    audience: str = "https://exchange.a2a-settlement.org",
+    expires_in: int = 3600,
+    algorithm: str = "HS256",
+    child_counterparty_policy: Optional[CounterpartyPolicy] = None,
+    purpose: Optional[str] = None,
+    transferable: bool = False,
+) -> tuple[str, str]:
+    """Async version that validates budget and allocates delegation atomically.
+
+    Use this when you have a SpendingTracker and want the allocation
+    to be recorded automatically.
+    """
+    await spending_tracker.validate_delegation_budget(
+        parent.jti, parent.settlement_claims.spending_limits, child_limits
+    )
+    token, child_jti = create_delegated_token(
+        parent=parent,
+        child_agent_id=child_agent_id,
+        child_limits=child_limits,
+        signing_key=signing_key,
+        issuer=issuer,
+        audience=audience,
+        expires_in=expires_in,
+        algorithm=algorithm,
+        child_counterparty_policy=child_counterparty_policy,
+        purpose=purpose,
+        transferable=transferable,
+    )
+    # Re-extract jti from token (decode without audience verification)
+    payload = pyjwt.decode(
+        token, signing_key, algorithms=[algorithm], options={"verify_aud": False}
+    )
+    child_jti = payload.get("jti", "unknown")
+    await spending_tracker.allocate_delegation(parent.jti, child_jti, child_limits)
+    return (token, child_jti)
 
 def validate_settlement_token(
     token: str,

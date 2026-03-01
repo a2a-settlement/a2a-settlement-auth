@@ -51,6 +51,28 @@ from .tokens import (
 logger = logging.getLogger("a2a_settlement_auth")
 
 
+def _make_webhook_callback(url: str):
+    """Create an on_revoke callback that POSTs to the given webhook URL."""
+
+    async def _post_revoke(token_jti: str) -> None:
+        try:
+            import httpx
+        except ImportError:
+            logger.error(
+                "revoke_webhook_url is set but httpx is not installed. "
+                "Install with: pip install a2a-settlement-auth[webhook]"
+            )
+            return
+        payload = {"event": "settlement:token:revoked", "jti": token_jti}
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(url, json=payload, timeout=5.0)
+        except Exception as e:
+            logger.warning("Revoke webhook POST failed: %s", e)
+
+    return _post_revoke
+
+
 @dataclass
 class SettlementAuthConfig:
     """Configuration for the settlement authentication middleware."""
@@ -97,6 +119,10 @@ class SettlementAuthConfig:
     on_auth_failure: Optional[Callable[[Request, str], Awaitable[None]]] = None
     """Optional async callback invoked on authorization failure (for alerting)."""
 
+    revoke_webhook_url: Optional[str] = None
+    """If set, POST settlement:token:revoked events to this URL when the kill switch fires.
+    Requires httpx: pip install a2a-settlement-auth[webhook]"""
+
 
 class SettlementMiddleware(BaseHTTPMiddleware):
     """FastAPI middleware that enforces settlement OAuth scopes.
@@ -117,7 +143,13 @@ class SettlementMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, config: SettlementAuthConfig):
         super().__init__(app)
         self.config = config
-        self.spending_tracker = SpendingTracker(config.spending_store)
+        on_revoke = None
+        if config.revoke_webhook_url:
+            on_revoke = _make_webhook_callback(config.revoke_webhook_url)
+        self.spending_tracker = SpendingTracker(
+            store=config.spending_store,
+            on_revoke=on_revoke,
+        )
 
     def _is_exempt(self, path: str) -> bool:
         """Check if a path is exempt from settlement authentication."""

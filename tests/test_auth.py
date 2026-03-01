@@ -12,11 +12,14 @@ from a2a_settlement_auth import (
     DelegationChain,
     DelegationLink,
     create_settlement_token,
+    create_delegated_token,
+    create_delegated_token_async,
     validate_settlement_token,
     SettlementTokenError,
     TokenExpiredError,
     InsufficientScopeError,
     SpendingLimitExceededError,
+    DelegationViolationError,
 )
 from a2a_settlement_auth.scopes import parse_scopes, scope_satisfies, format_scopes
 from a2a_settlement_auth.spending import SpendingTracker, SpendingRecord
@@ -147,6 +150,17 @@ class TestClaims:
 
     def test_from_jwt_claims_returns_none_when_missing(self):
         assert SettlementClaims.from_jwt_claims({"sub": "test"}) is None
+
+    def test_parent_jti_roundtrip(self):
+        claims = SettlementClaims(
+            agent_id="child-bot",
+            org_id="org-acme",
+            parent_jti="parent-jti-123",
+        )
+        d = claims.to_dict()
+        assert d["parent_jti"] == "parent-jti-123"
+        restored = SettlementClaims.from_dict(d)
+        assert restored.parent_jti == "parent-jti-123"
 
 
 # ─── Token Tests ───────────────────────────────────────────────────────────
@@ -346,3 +360,188 @@ class TestSpendingTracker:
         assert summary["spent_session"] == 125
         assert summary["remaining"]["per_day"] == 375
         assert summary["revoked"] is False
+
+    @pytest.mark.asyncio
+    async def test_on_revoke_callback(self, tracker):
+        revoked_jtis = []
+
+        async def on_revoke(jti: str):
+            revoked_jtis.append(jti)
+
+        t = SpendingTracker(on_revoke=on_revoke)
+        await t.revoke("token-99")
+        assert revoked_jtis == ["token-99"]
+
+    @pytest.mark.asyncio
+    async def test_allocate_delegation_and_effective_limits(self, tracker):
+        limits = SpendingLimit(per_day=500, per_transaction=100)
+        # Parent allocates 200/day, 50/tx to child
+        await tracker.allocate_delegation(
+            "parent-jti", "child-jti", SpendingLimit(per_day=200, per_transaction=50)
+        )
+        # Parent's effective: 300/day, 50/tx
+        result = await tracker.check("parent-jti", 50, limits)
+        assert result.allowed is True
+        result = await tracker.check("parent-jti", 100, limits)
+        assert result.allowed is False
+        assert "per-transaction" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_cascade_revocation(self, tracker):
+        await tracker.allocate_delegation(
+            "parent-jti", "child-jti", SpendingLimit(per_day=100)
+        )
+        await tracker.allocate_delegation(
+            "child-jti", "grandchild-jti", SpendingLimit(per_day=50)
+        )
+        # Revoke parent - cascades to child and grandchild
+        await tracker.revoke("parent-jti")
+        assert await tracker._store.is_revoked("parent-jti")
+        assert await tracker._store.is_revoked("child-jti")
+        assert await tracker._store.is_revoked("grandchild-jti")
+
+    @pytest.mark.asyncio
+    async def test_revoke_child_returns_allocation_to_parent(self, tracker):
+        limits = SpendingLimit(per_day=500)
+        await tracker.allocate_delegation(
+            "parent-jti", "child-jti", SpendingLimit(per_day=200)
+        )
+        # Parent has 300 effective
+        result = await tracker.check("parent-jti", 300, limits)
+        assert result.allowed is True
+        # Revoke child - allocation returns
+        await tracker.revoke("child-jti")
+        # Parent now has full 500
+        result = await tracker.check("parent-jti", 500, limits)
+        assert result.allowed is True
+
+
+# ─── Delegation Token Tests ────────────────────────────────────────────────
+
+class TestCreateDelegatedToken:
+    def _make_parent_claims(self, transferable: bool = True):
+        return SettlementClaims(
+            agent_id="orchestrator-bot",
+            org_id="org-acme",
+            spending_limits=SpendingLimit(per_day=500, per_transaction=100),
+            delegation=DelegationChain(
+                chain=[
+                    DelegationLink(
+                        principal="user:admin@acme.com",
+                        delegated_at="2026-03-01T00:00:00Z",
+                        purpose="Orchestrator",
+                    ),
+                ],
+                transferable=transferable,
+            ),
+        )
+
+    def test_create_delegated_token_success(self):
+        claims = self._make_parent_claims(transferable=True)
+        token = create_settlement_token(
+            claims=claims,
+            scopes={SettlementScope.TRANSACT},
+            signing_key=SECRET_KEY,
+            issuer=ISSUER,
+            audience=AUDIENCE,
+        )
+        validated = validate_settlement_token(token, SECRET_KEY, audience=AUDIENCE)
+
+        child_token, child_jti = create_delegated_token(
+            parent=validated,
+            child_agent_id="scraper-bot",
+            child_limits=SpendingLimit(per_day=50, per_transaction=25),
+            signing_key=SECRET_KEY,
+            issuer=ISSUER,
+            audience=AUDIENCE,
+        )
+        assert child_jti
+        child_validated = validate_settlement_token(
+            child_token, SECRET_KEY, audience=AUDIENCE
+        )
+        assert child_validated.settlement_claims.agent_id == "scraper-bot"
+        assert child_validated.settlement_claims.parent_jti == validated.jti
+        assert child_validated.settlement_claims.spending_limits.per_day == 50
+        assert child_validated.settlement_claims.delegation.human_principal == "user:admin@acme.com"
+        assert len(child_validated.settlement_claims.delegation.chain) == 2
+
+    def test_create_delegated_token_non_transferable_raises(self):
+        claims = self._make_parent_claims(transferable=False)
+        token = create_settlement_token(
+            claims=claims,
+            scopes={SettlementScope.TRANSACT},
+            signing_key=SECRET_KEY,
+            issuer=ISSUER,
+            audience=AUDIENCE,
+        )
+        validated = validate_settlement_token(token, SECRET_KEY, audience=AUDIENCE)
+
+        with pytest.raises(DelegationViolationError, match="transferable"):
+            create_delegated_token(
+                parent=validated,
+                child_agent_id="scraper-bot",
+                child_limits=SpendingLimit(per_day=50),
+                signing_key=SECRET_KEY,
+                issuer=ISSUER,
+                audience=AUDIENCE,
+            )
+
+    def test_create_delegated_token_child_exceeds_parent_raises(self):
+        claims = self._make_parent_claims(transferable=True)
+        token = create_settlement_token(
+            claims=claims,
+            scopes={SettlementScope.TRANSACT},
+            signing_key=SECRET_KEY,
+            issuer=ISSUER,
+            audience=AUDIENCE,
+        )
+        validated = validate_settlement_token(token, SECRET_KEY, audience=AUDIENCE)
+
+        with pytest.raises(DelegationViolationError, match="per_day"):
+            create_delegated_token(
+                parent=validated,
+                child_agent_id="scraper-bot",
+                child_limits=SpendingLimit(
+                    per_day=600, per_transaction=50
+                ),  # per_day exceeds parent's 500
+                signing_key=SECRET_KEY,
+                issuer=ISSUER,
+                audience=AUDIENCE,
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_delegated_token_async_with_allocation(self):
+        claims = self._make_parent_claims(transferable=True)
+        token = create_settlement_token(
+            claims=claims,
+            scopes={SettlementScope.TRANSACT},
+            signing_key=SECRET_KEY,
+            issuer=ISSUER,
+            audience=AUDIENCE,
+        )
+        validated = validate_settlement_token(token, SECRET_KEY, audience=AUDIENCE)
+        tracker = SpendingTracker()
+
+        child_token, child_jti = await create_delegated_token_async(
+            parent=validated,
+            child_agent_id="scraper-bot",
+            child_limits=SpendingLimit(per_day=50, per_transaction=25),
+            signing_key=SECRET_KEY,
+            issuer=ISSUER,
+            spending_tracker=tracker,
+            audience=AUDIENCE,
+        )
+        # Allocation recorded: parent effective per_tx=75, per_day=450
+        result = await tracker.check(
+            validated.jti,
+            75,
+            validated.settlement_claims.spending_limits,
+        )
+        assert result.allowed is True
+        result = await tracker.check(
+            validated.jti,
+            100,
+            validated.settlement_claims.spending_limits,
+        )
+        assert result.allowed is False
+        assert "per-transaction" in result.reason

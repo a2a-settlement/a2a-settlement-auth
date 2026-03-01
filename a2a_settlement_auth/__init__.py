@@ -27,6 +27,8 @@ from .claims import (
 )
 from .tokens import (
     create_settlement_token,
+    create_delegated_token,
+    create_delegated_token_async,
     validate_settlement_token,
     check_counterparty,
     SettlementTokenError,
@@ -34,6 +36,7 @@ from .tokens import (
     InsufficientScopeError,
     SpendingLimitExceededError,
     CounterpartyDeniedError,
+    DelegationViolationError,
 )
 from .middleware import SettlementMiddleware, SettlementAuthConfig
 from .spending import SpendingTracker, SpendingRecord
@@ -59,6 +62,9 @@ __all__ = [
     "TokenExpiredError",
     "InsufficientScopeError",
     "SpendingLimitExceededError",
+    "DelegationViolationError",
+    "create_delegated_token",
+    "create_delegated_token_async",
     # Middleware
     "SettlementMiddleware",
     "SettlementAuthConfig",

@@ -240,6 +240,9 @@ class SettlementClaims:
     delegation: Optional[DelegationChain] = None
     """Delegation chain from human principal to this agent."""
 
+    parent_jti: Optional[str] = None
+    """JTI of the delegating parent's token. Creates a tree for hierarchical delegation."""
+
     environment: Optional[str] = None
     """Deployment environment classification (e.g., 'production', 'sandbox', 'classified')."""
 
@@ -259,6 +262,8 @@ class SettlementClaims:
             result["counterparty_policy"] = cp
         if self.delegation:
             result["delegation"] = self.delegation.to_dict()
+        if self.parent_jti:
+            result["parent_jti"] = self.parent_jti
         if self.environment:
             result["environment"] = self.environment
         if self.certification_id:
@@ -283,6 +288,7 @@ class SettlementClaims:
                 if "delegation" in data
                 else None
             ),
+            parent_jti=data.get("parent_jti"),
             environment=data.get("environment"),
             certification_id=data.get("certification_id"),
         )

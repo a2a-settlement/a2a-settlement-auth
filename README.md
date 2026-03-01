@@ -150,6 +150,54 @@ await tracker.record(validated.jti, 200, "escrow-001", "counterparty-bot")
 await tracker.revoke(validated.jti)
 ```
 
+### Kill Switch and IdP Integration
+
+The kill switch revokes spending authority in the **local store only** (in-memory or Redis/Postgres). It does not and should not attempt to revoke the token at the IdP. The exchange is a relying party that validates tokens; it does not hold IdP admin credentials. Revoking at the IdP would also kill all access (e.g., non-settlement scopes), not just economic authority. The local blacklist is instant—the next request is denied in microseconds.
+
+To integrate with your IdP or security orchestrator, configure `revoke_webhook_url`. When the kill switch fires, the exchange emits a `settlement:token:revoked` event to that URL. Your security team can then decide whether to revoke at the IdP, disable the agent, or monitor.
+
+```python
+config = SettlementAuthConfig(
+    verification_key="your-signing-key",
+    revoke_webhook_url="https://your-security-hook.example.com/revoke",
+)
+# Requires: pip install a2a-settlement-auth[webhook]
+```
+
+**Pattern:** The kill switch stops settlement immediately; integrate with your IdP's revocation endpoint via the webhook for full token revocation.
+
+### Hierarchical Delegation
+
+Spending limits are inherited downward and can only be narrowed, never expanded. An orchestrator with a $500/day limit can delegate to sub-agents with carved-out budgets (e.g., $50/day to a scraper, $200/day to an analyst). The sum of delegated allocations cannot exceed the parent's limit per dimension.
+
+Each delegated token includes `parent_jti` linking to the delegating token, forming a tree. Use `create_delegated_token` (sync) or `create_delegated_token_async` (with `SpendingTracker`) to issue sub-tokens:
+
+```python
+from a2a_settlement_auth import (
+    create_delegated_token_async,
+    validate_settlement_token,
+    SpendingLimit,
+    SpendingTracker,
+)
+
+# Parent token (orchestrator) with transferable=True
+validated = validate_settlement_token(token, key, audience=audience)
+tracker = SpendingTracker()
+
+# Create delegated token for scraper with $50/day
+child_token, child_jti = await create_delegated_token_async(
+    parent=validated,
+    child_agent_id="scraper-bot",
+    child_limits=SpendingLimit(per_day=50, per_transaction=25),
+    signing_key=exchange_signing_key,
+    issuer=exchange_url,
+    spending_tracker=tracker,
+)
+# Allocation is recorded automatically; parent's effective daily budget drops by $50
+```
+
+When a child token is revoked, its allocation returns to the parent's pool. Revoking a parent cascades—all descendant tokens lose economic authority instantly.
+
 ## Settlement Scopes
 
 | Scope | Description |
@@ -213,6 +261,7 @@ Claims are namespaced under `https://a2a-settlement.org/claims` in the JWT paylo
 | `counterparty_policy.require_certified` | bool | Require certified counterparties |
 | `delegation.chain` | object[] | Ordered delegation links |
 | `delegation.transferable` | bool | Can the agent sub-delegate? |
+| `parent_jti` | string | JTI of delegating parent (hierarchical delegation) |
 | `settlement_methods` | string[] | Permitted methods (token, fiat) |
 | `environment` | string | Deployment env (production, sandbox) |
 | `certification_id` | string | Agent ATO/certification reference |
