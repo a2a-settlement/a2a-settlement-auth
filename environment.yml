@@ -1,0 +1,14 @@
+name: a2a_settlement_auth
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - ipython
+  - pytest
+  - pytest-asyncio
+  - python-dotenv
+  - pip:
+    - -e .
+

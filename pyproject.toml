@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a2a-settlement-auth"
+version = "0.1.0"
+description = "OAuth 2.0 settlement scopes for agent economic authorization — extends identity tokens with spending limits, counterparty policies, and delegation chains for the A2A Settlement Exchange."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Richard Smith"},
+]
+keywords = [
+    "a2a", "agent", "settlement", "oauth", "authorization",
+    "escrow", "economic", "identity", "scopes", "jwt",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "PyJWT>=2.8",
+    "starlette>=0.27",
+]
+
+[project.optional-dependencies]
+fastapi = ["fastapi>=0.110"]
+redis = ["redis>=5.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/a2a-settlement/a2a-settlement-auth"
+Documentation = "https://github.com/a2a-settlement/a2a-settlement-auth#readme"
+Repository = "https://github.com/a2a-settlement/a2a-settlement-auth"
+Issues = "https://github.com/a2a-settlement/a2a-settlement-auth/issues"
+
+[tool.setuptools.packages.find]
+include = ["a2a_settlement_auth*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
