@@ -40,6 +40,7 @@ from .tokens import (
 )
 from .middleware import SettlementMiddleware, SettlementAuthConfig
 from .spending import SpendingTracker, SpendingRecord, SpendingStore, InMemorySpendingStore
+from .redis_store import RedisSpendingStore
 
 __all__ = [
     # Scopes
@@ -73,4 +74,5 @@ __all__ = [
     "SpendingRecord",
     "SpendingStore",
     "InMemorySpendingStore",
+    "RedisSpendingStore",
 ]

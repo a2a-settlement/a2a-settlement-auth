@@ -73,12 +73,14 @@ _SCOPE_EXPANSIONS: dict[SettlementScope, Set[SettlementScope]] = {
 ENDPOINT_SCOPE_MAP: dict[str, SettlementScope] = {
     # Balance & history (read)
     "GET /exchange/balance": SettlementScope.READ,
-    "GET /exchange/history": SettlementScope.READ,
-    "GET /exchange/reputation": SettlementScope.READ,
+    "GET /exchange/transactions": SettlementScope.READ,
+    "GET /exchange/escrows": SettlementScope.READ,
     # Escrow lifecycle
     "POST /exchange/escrow": SettlementScope.ESCROW_CREATE,
+    "POST /exchange/escrow/batch": SettlementScope.ESCROW_CREATE,
     "POST /exchange/release": SettlementScope.ESCROW_RELEASE,
     "POST /exchange/refund": SettlementScope.ESCROW_REFUND,
+    "POST /exchange/deposit": SettlementScope.ESCROW_CREATE,
     # Disputes
     "POST /exchange/dispute": SettlementScope.DISPUTE_FILE,
     "POST /exchange/resolve": SettlementScope.DISPUTE_RESOLVE,
@@ -150,15 +152,24 @@ def scope_satisfies(
 def scopes_for_endpoint(method: str, path: str) -> SettlementScope | None:
     """Look up the required settlement scope for an exchange API endpoint.
 
+    Strips versioned prefixes (/v1/, /api/v1/) before matching so the
+    scope map works regardless of how the exchange mounts its routes.
+
     Args:
         method: HTTP method (GET, POST, etc.)
-        path: URL path (e.g., '/exchange/escrow')
+        path: URL path (e.g., '/v1/exchange/escrow' or '/exchange/escrow')
 
     Returns:
         The required SettlementScope, or None if the endpoint is not
         settlement-scoped (i.e., public or non-settlement).
     """
-    key = f"{method.upper()} {path}"
+    normalized = path
+    for prefix in ("/api/v1", "/v1"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+
+    key = f"{method.upper()} {normalized}"
     return ENDPOINT_SCOPE_MAP.get(key)
 
 
