@@ -277,15 +277,39 @@ class SettlementMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Check spending limits for escrow creation
-        if (
-            self.config.enforce_spending_limits
-            and path.endswith("/escrow")
-            and method == "POST"
-        ):
+        # For escrow creation endpoints, enforce spending limits and counterparty policy
+        if path.endswith("/escrow") and method == "POST":
             try:
                 body = await request.body()
                 body_json = json.loads(body) if body else {}
+            except (json.JSONDecodeError, AttributeError):
+                body_json = {}
+
+            # Counterparty policy enforcement
+            if self.config.enforce_counterparty_policy and body_json:
+                provider_id = body_json.get("provider_id", "")
+                if provider_id:
+                    try:
+                        check_counterparty(
+                            validated.settlement_claims,
+                            counterparty_id=provider_id,
+                        )
+                    except CounterpartyDeniedError as e:
+                        reason = f"Counterparty denied: {e}"
+                        await self._log_decision(request, False, reason, validated)
+                        if self.config.on_auth_failure:
+                            await self.config.on_auth_failure(request, reason)
+                        return JSONResponse(
+                            status_code=403,
+                            content={
+                                "error": "counterparty_denied",
+                                "message": str(e),
+                                "provider_id": provider_id,
+                            },
+                        )
+
+            # Spending limits enforcement
+            if self.config.enforce_spending_limits and body_json:
                 amount = body_json.get("amount", 0)
 
                 if amount > 0:
@@ -313,8 +337,6 @@ class SettlementMiddleware(BaseHTTPMiddleware):
                                 },
                             },
                         )
-            except (json.JSONDecodeError, AttributeError):
-                pass  # If we can't parse the body, let the exchange handle validation
 
         # Attach validated token to request state
         request.state.settlement_token = validated

@@ -39,7 +39,7 @@ from .tokens import (
     DelegationViolationError,
 )
 from .middleware import SettlementMiddleware, SettlementAuthConfig
-from .spending import SpendingTracker, SpendingRecord
+from .spending import SpendingTracker, SpendingRecord, SpendingStore, InMemorySpendingStore
 
 __all__ = [
     # Scopes
@@ -71,4 +71,6 @@ __all__ = [
     # Spending
     "SpendingTracker",
     "SpendingRecord",
+    "SpendingStore",
+    "InMemorySpendingStore",
 ]
