@@ -249,6 +249,15 @@ class SettlementClaims:
     certification_id: Optional[str] = None
     """Reference to this agent's certification/ATO record, if certified."""
 
+    allowed_secret_ids: list[str] = field(default_factory=list)
+    """Secret IDs this agent is authorized to resolve via the Security Shim.
+
+    If empty, the agent has no secret-level restrictions from the token
+    (access is governed by the vault's own per-secret policies instead).
+    If non-empty, the shim SHOULD reject resolve requests for secret IDs
+    not in this list.
+    """
+
     def to_dict(self) -> dict:
         """Serialize to a dict suitable for JWT claim embedding."""
         result: dict = {
@@ -268,6 +277,8 @@ class SettlementClaims:
             result["environment"] = self.environment
         if self.certification_id:
             result["certification_id"] = self.certification_id
+        if self.allowed_secret_ids:
+            result["allowed_secret_ids"] = self.allowed_secret_ids
         return result
 
     @classmethod
@@ -291,6 +302,7 @@ class SettlementClaims:
             parent_jti=data.get("parent_jti"),
             environment=data.get("environment"),
             certification_id=data.get("certification_id"),
+            allowed_secret_ids=data.get("allowed_secret_ids", []),
         )
 
     def to_jwt_claims(self) -> dict:

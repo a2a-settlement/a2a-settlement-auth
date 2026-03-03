@@ -41,6 +41,17 @@ from .tokens import (
 from .middleware import SettlementMiddleware, SettlementAuthConfig
 from .spending import SpendingTracker, SpendingRecord, SpendingStore, InMemorySpendingStore
 from .redis_store import RedisSpendingStore
+from .vault import (
+    SecretVault,
+    SecretPolicy,
+    RegisteredSecret,
+    SecretVaultError,
+    SecretNotFoundError,
+    SecretRevokedError,
+    SecretAccessDeniedError,
+)
+from .vault_crypto import VaultCipher, VaultDecryptionError
+from .vault_store import VaultStore, InMemoryVaultStore, SecretEntry, ResolveAuditEntry
 
 __all__ = [
     # Scopes
@@ -75,4 +86,18 @@ __all__ = [
     "SpendingStore",
     "InMemorySpendingStore",
     "RedisSpendingStore",
+    # Vault
+    "SecretVault",
+    "SecretPolicy",
+    "RegisteredSecret",
+    "SecretVaultError",
+    "SecretNotFoundError",
+    "SecretRevokedError",
+    "SecretAccessDeniedError",
+    "VaultCipher",
+    "VaultDecryptionError",
+    "VaultStore",
+    "InMemoryVaultStore",
+    "SecretEntry",
+    "ResolveAuditEntry",
 ]
