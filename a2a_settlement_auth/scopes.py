@@ -38,6 +38,7 @@ class SettlementScope(str, Enum):
 
     # Escrow lifecycle
     ESCROW_CREATE = "settlement:escrow:create"
+    ESCROW_DELIVER = "settlement:escrow:deliver"
     ESCROW_RELEASE = "settlement:escrow:release"
     ESCROW_REFUND = "settlement:escrow:refund"
 
@@ -55,12 +56,14 @@ _SCOPE_EXPANSIONS: dict[SettlementScope, Set[SettlementScope]] = {
     SettlementScope.TRANSACT: {
         SettlementScope.READ,
         SettlementScope.ESCROW_CREATE,
+        SettlementScope.ESCROW_DELIVER,
         SettlementScope.ESCROW_RELEASE,
         SettlementScope.ESCROW_REFUND,
     },
     SettlementScope.ADMIN: {
         SettlementScope.READ,
         SettlementScope.ESCROW_CREATE,
+        SettlementScope.ESCROW_DELIVER,
         SettlementScope.ESCROW_RELEASE,
         SettlementScope.ESCROW_REFUND,
         SettlementScope.DISPUTE_FILE,
@@ -81,6 +84,8 @@ ENDPOINT_SCOPE_MAP: dict[str, SettlementScope] = {
     "POST /exchange/release": SettlementScope.ESCROW_RELEASE,
     "POST /exchange/refund": SettlementScope.ESCROW_REFUND,
     "POST /exchange/deposit": SettlementScope.ESCROW_CREATE,
+    # Deliver (dynamic path: /exchange/escrow/{id}/deliver)
+    "POST /exchange/escrow/*/deliver": SettlementScope.ESCROW_DELIVER,
     # Disputes
     "POST /exchange/dispute": SettlementScope.DISPUTE_FILE,
     "POST /exchange/resolve": SettlementScope.DISPUTE_RESOLVE,
@@ -122,9 +127,7 @@ def parse_scopes(scope_string: str) -> Set[SettlementScope]:
     return settlement_scopes
 
 
-def scope_satisfies(
-    granted: Set[SettlementScope], required: SettlementScope
-) -> bool:
+def scope_satisfies(granted: Set[SettlementScope], required: SettlementScope) -> bool:
     """Check whether a set of granted scopes satisfies a required scope.
 
     Handles composite scope expansion: if the granted set includes
@@ -166,11 +169,27 @@ def scopes_for_endpoint(method: str, path: str) -> SettlementScope | None:
     normalized = path
     for prefix in ("/api/v1", "/v1"):
         if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):]
+            normalized = normalized[len(prefix) :]
             break
 
     key = f"{method.upper()} {normalized}"
-    return ENDPOINT_SCOPE_MAP.get(key)
+    result = ENDPOINT_SCOPE_MAP.get(key)
+    if result:
+        return result
+
+    # Check wildcard patterns (e.g. POST /exchange/escrow/*/deliver)
+    parts = normalized.strip("/").split("/")
+    for pattern, scope in ENDPOINT_SCOPE_MAP.items():
+        pat_method, pat_path = pattern.split(" ", 1)
+        if pat_method != method.upper():
+            continue
+        pat_parts = pat_path.strip("/").split("/")
+        if len(pat_parts) != len(parts):
+            continue
+        if all(pp == "*" or pp == rp for pp, rp in zip(pat_parts, parts)):
+            return scope
+
+    return None
 
 
 def format_scopes(scopes: Set[SettlementScope]) -> str:
