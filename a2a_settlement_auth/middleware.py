@@ -74,6 +74,74 @@ def _make_webhook_callback(url: str):
 
 
 @dataclass
+class AttestationValidatorResult:
+    """Result of an OCSP-style attestation validity check."""
+    valid: bool
+    status: str = "active"
+    in_flight_grace: bool = False
+    reason: str = ""
+
+
+class AttestationValidator:
+    """OCSP-style attestation validator that checks the exchange's status endpoint.
+
+    Results are cached briefly to avoid hammering the exchange on every request.
+    """
+
+    def __init__(
+        self,
+        exchange_url: str,
+        cache_ttl_seconds: int = 30,
+        timeout_seconds: float = 5.0,
+    ):
+        self.exchange_url = exchange_url.rstrip("/")
+        self.cache_ttl = cache_ttl_seconds
+        self.timeout = timeout_seconds
+        self._cache: dict[str, tuple[float, AttestationValidatorResult]] = {}
+
+    async def check(self, attestation_id: str) -> AttestationValidatorResult:
+        now = time.time()
+        cached = self._cache.get(attestation_id)
+        if cached and (now - cached[0]) < self.cache_ttl:
+            return cached[1]
+
+        try:
+            import httpx
+        except ImportError:
+            return AttestationValidatorResult(valid=True, reason="httpx not installed; skipping check")
+
+        url = f"{self.exchange_url}/v1/exchange/attestations/{attestation_id}/status"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=self.timeout)
+            if resp.status_code == 404:
+                result = AttestationValidatorResult(valid=False, status="unknown", reason="Attestation not found")
+            elif resp.status_code == 200:
+                data = resp.json()
+                status = data.get("status", "active")
+                in_flight = data.get("in_flight_grace", False)
+                if status == "active":
+                    result = AttestationValidatorResult(valid=True, status=status)
+                elif status in ("expired", "revoked"):
+                    result = AttestationValidatorResult(
+                        valid=in_flight,
+                        status=status,
+                        in_flight_grace=in_flight,
+                        reason=f"Attestation {status}" + (" (in-flight grace)" if in_flight else ""),
+                    )
+                else:
+                    result = AttestationValidatorResult(valid=False, status=status, reason=f"Attestation {status}")
+            else:
+                result = AttestationValidatorResult(valid=True, reason=f"Exchange returned {resp.status_code}; allowing")
+        except Exception as e:
+            logger.warning("Attestation check failed for %s: %s", attestation_id, e)
+            result = AttestationValidatorResult(valid=True, reason="Check failed; fail-open")
+
+        self._cache[attestation_id] = (now, result)
+        return result
+
+
+@dataclass
 class SettlementAuthConfig:
     """Configuration for the settlement authentication middleware."""
 
@@ -113,6 +181,16 @@ class SettlementAuthConfig:
     enforce_counterparty_policy: bool = True
     """Whether to enforce counterparty restrictions from token claims."""
 
+    enforce_attestation_validity: bool = False
+    """Whether to check attestation TTL/revocation status on every request."""
+
+    attestation_validator: Optional[AttestationValidator] = None
+    """Pluggable attestation validator. If None and enforce_attestation_validity is True,
+    a default validator is created from attestation_exchange_url."""
+
+    attestation_exchange_url: Optional[str] = None
+    """Exchange URL for the default attestation validator."""
+
     log_decisions: bool = True
     """Whether to log authorization decisions for audit trail."""
 
@@ -150,6 +228,9 @@ class SettlementMiddleware(BaseHTTPMiddleware):
             store=config.spending_store,
             on_revoke=on_revoke,
         )
+        self._attestation_validator: Optional[AttestationValidator] = config.attestation_validator
+        if self._attestation_validator is None and config.enforce_attestation_validity and config.attestation_exchange_url:
+            self._attestation_validator = AttestationValidator(config.attestation_exchange_url)
 
     def _is_exempt(self, path: str) -> bool:
         """Check if a path is exempt from settlement authentication."""
@@ -259,6 +340,24 @@ class SettlementMiddleware(BaseHTTPMiddleware):
                     "message": str(e),
                 },
             )
+
+        # OCSP-style attestation validity check (zero-grace for identity)
+        if self.config.enforce_attestation_validity and self._attestation_validator:
+            att_id = validated.settlement_claims.extra.get("attestation_id") if hasattr(validated.settlement_claims, "extra") else None
+            if att_id:
+                att_result = await self._attestation_validator.check(att_id)
+                if not att_result.valid:
+                    reason = f"Attestation invalid: {att_result.reason}"
+                    await self._log_decision(request, False, reason, validated)
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "error": "attestation_invalid",
+                            "message": reason,
+                            "attestation_status": att_result.status,
+                            "in_flight_grace": att_result.in_flight_grace,
+                        },
+                    )
 
         # Check required scope for this endpoint
         required_scope = scopes_for_endpoint(method, path)

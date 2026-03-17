@@ -38,7 +38,19 @@ from .tokens import (
     CounterpartyDeniedError,
     DelegationViolationError,
 )
-from .middleware import SettlementMiddleware, SettlementAuthConfig
+from .middleware import SettlementMiddleware, SettlementAuthConfig, AttestationValidator, AttestationValidatorResult
+from .multisig import (
+    MultiSigPolicy,
+    PublicKeyEntry,
+    KeyType,
+    MultiSigError,
+    InsufficientSignaturesError,
+    InvalidSignatureError,
+    sign_revocation,
+    verify_multisig,
+    requires_multisig,
+    policy_for_type,
+)
 from .spending import SpendingTracker, SpendingRecord, SpendingStore, InMemorySpendingStore
 from .redis_store import RedisSpendingStore
 from .vault import (
@@ -80,6 +92,19 @@ __all__ = [
     # Middleware
     "SettlementMiddleware",
     "SettlementAuthConfig",
+    "AttestationValidator",
+    "AttestationValidatorResult",
+    # Multi-sig
+    "MultiSigPolicy",
+    "PublicKeyEntry",
+    "KeyType",
+    "MultiSigError",
+    "InsufficientSignaturesError",
+    "InvalidSignatureError",
+    "sign_revocation",
+    "verify_multisig",
+    "requires_multisig",
+    "policy_for_type",
     # Spending
     "SpendingTracker",
     "SpendingRecord",
