@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "a2a-settlement-auth"
-version = "0.1.0"
+version = "0.2.0"
 description = "OAuth 2.0 settlement scopes for agent economic authorization — extends identity tokens with spending limits, counterparty policies, and delegation chains for the A2A Settlement Exchange."
 readme = "README.md"
 license = {text = "MIT"}

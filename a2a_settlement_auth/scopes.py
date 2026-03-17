@@ -46,6 +46,9 @@ class SettlementScope(str, Enum):
     DISPUTE_FILE = "settlement:dispute:file"
     DISPUTE_RESOLVE = "settlement:dispute:resolve"
 
+    # Evidence
+    EVIDENCE_SUBMIT = "settlement:evidence:submit"
+
     # Composite scopes
     TRANSACT = "settlement:transact"  # create + release + refund
     ADMIN = "settlement:admin"  # all settlement operations
@@ -68,6 +71,7 @@ _SCOPE_EXPANSIONS: dict[SettlementScope, Set[SettlementScope]] = {
         SettlementScope.ESCROW_REFUND,
         SettlementScope.DISPUTE_FILE,
         SettlementScope.DISPUTE_RESOLVE,
+        SettlementScope.EVIDENCE_SUBMIT,
         SettlementScope.TRANSACT,
     },
 }
@@ -89,6 +93,10 @@ ENDPOINT_SCOPE_MAP: dict[str, SettlementScope] = {
     # Disputes
     "POST /exchange/dispute": SettlementScope.DISPUTE_FILE,
     "POST /exchange/resolve": SettlementScope.DISPUTE_RESOLVE,
+    # Evidence (dynamic path: /exchange/escrow/{id}/evidence)
+    "POST /exchange/escrow/*/evidence": SettlementScope.EVIDENCE_SUBMIT,
+    "GET /exchange/escrow/*/evidence": SettlementScope.READ,
+    "GET /exchange/escrow/*/compliance-bundle": SettlementScope.READ,
 }
 
 
