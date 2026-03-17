@@ -99,6 +99,14 @@ ENDPOINT_SCOPE_MAP: dict[str, SettlementScope] = {
     "GET /exchange/escrow/*/compliance-bundle": SettlementScope.READ,
 }
 
+# Federation endpoints — mapped to string scopes (not SettlementScope enum)
+# since federation scopes live in a separate namespace.
+FEDERATION_ENDPOINT_SCOPE_MAP: dict[str, str] = {
+    "POST /federation/peer": "federation:peer",
+    "POST /federation/verify": "federation:verify",
+    "POST /federation/attestation/import": "federation:attestation:import",
+}
+
 
 def parse_scopes(scope_string: str) -> Set[SettlementScope]:
     """Parse an OAuth scope string and return the set of settlement scopes.

@@ -65,6 +65,21 @@ from .vault import (
 from .vault_crypto import VaultCipher, VaultDecryptionError
 from .vault_store import VaultStore, InMemoryVaultStore, SecretEntry, ResolveAuditEntry
 
+# Federation subpackages (imported conditionally to avoid hard dep on httpx for non-federation use)
+try:
+    from .did import DIDResolver, DIDDocument, DIDResolutionError, KeyNotFoundError, VerificationMethod
+    from .did import KeyRotationEvent, KeyRotationError, verify_rotation_event
+    from .vc import (
+        FederationVC, IdentityAttestationVC, CapabilityAttestationVC,
+        ReputationAttestationVC, EvidenceAttestationVC, TransactionAttestationVC,
+        FederationVCVerifier, VCVerificationResult, VCVerificationStatus,
+        parse_federation_vc,
+    )
+    from .federation import FederationScope, FEDERATION_SCOPES, FEDERATION_ENDPOINT_SCOPE_MAP
+    _FEDERATION_AVAILABLE = True
+except ImportError:
+    _FEDERATION_AVAILABLE = False
+
 __all__ = [
     # Scopes
     "SettlementScope",
@@ -125,4 +140,26 @@ __all__ = [
     "InMemoryVaultStore",
     "SecretEntry",
     "ResolveAuditEntry",
+    # Federation (available when federation extra is installed)
+    "DIDResolver",
+    "DIDDocument",
+    "DIDResolutionError",
+    "KeyNotFoundError",
+    "VerificationMethod",
+    "KeyRotationEvent",
+    "KeyRotationError",
+    "verify_rotation_event",
+    "FederationVC",
+    "IdentityAttestationVC",
+    "CapabilityAttestationVC",
+    "ReputationAttestationVC",
+    "EvidenceAttestationVC",
+    "TransactionAttestationVC",
+    "FederationVCVerifier",
+    "VCVerificationResult",
+    "VCVerificationStatus",
+    "parse_federation_vc",
+    "FederationScope",
+    "FEDERATION_SCOPES",
+    "FEDERATION_ENDPOINT_SCOPE_MAP",
 ]
