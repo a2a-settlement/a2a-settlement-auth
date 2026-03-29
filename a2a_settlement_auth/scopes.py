@@ -48,6 +48,10 @@ class SettlementScope(str, Enum):
 
     # Evidence
     EVIDENCE_SUBMIT = "settlement:evidence:submit"
+    EVIDENCE_ORACLE = "settlement:evidence:oracle"  # oracle/third-party evidence submission
+
+    # Instant settlement (requires minimum EMA reputation on the exchange side)
+    INSTANT_SETTLE = "settlement:instant:settle"
 
     # Composite scopes
     TRANSACT = "settlement:transact"  # create + release + refund
@@ -62,6 +66,7 @@ _SCOPE_EXPANSIONS: dict[SettlementScope, Set[SettlementScope]] = {
         SettlementScope.ESCROW_DELIVER,
         SettlementScope.ESCROW_RELEASE,
         SettlementScope.ESCROW_REFUND,
+        SettlementScope.INSTANT_SETTLE,
     },
     SettlementScope.ADMIN: {
         SettlementScope.READ,
@@ -72,6 +77,8 @@ _SCOPE_EXPANSIONS: dict[SettlementScope, Set[SettlementScope]] = {
         SettlementScope.DISPUTE_FILE,
         SettlementScope.DISPUTE_RESOLVE,
         SettlementScope.EVIDENCE_SUBMIT,
+        SettlementScope.EVIDENCE_ORACLE,
+        SettlementScope.INSTANT_SETTLE,
         SettlementScope.TRANSACT,
     },
 }
@@ -97,6 +104,10 @@ ENDPOINT_SCOPE_MAP: dict[str, SettlementScope] = {
     "POST /exchange/escrow/*/evidence": SettlementScope.EVIDENCE_SUBMIT,
     "GET /exchange/escrow/*/evidence": SettlementScope.READ,
     "GET /exchange/escrow/*/compliance-bundle": SettlementScope.READ,
+    # Oracle evidence (dynamic path: /exchange/escrow/{id}/oracle-evidence)
+    "POST /exchange/escrow/*/oracle-evidence": SettlementScope.EVIDENCE_ORACLE,
+    # Instant settlement
+    "POST /exchange/instant-settle": SettlementScope.INSTANT_SETTLE,
 }
 
 # Federation endpoints — mapped to string scopes (not SettlementScope enum)
